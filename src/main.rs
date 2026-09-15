@@ -214,7 +214,7 @@ fn first_run() {
     );
     assert!(
         std::process::Command::new("openssl")
-            .args(["rsa", "-in", "private", "-pubout", "-out", "rsa"])
+            .args(["rsa", "-in", "private", "-pubout", "-out", RSA_FILE])
             .spawn()
             .unwrap()
             .wait()
