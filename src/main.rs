@@ -58,6 +58,7 @@ fn terminal_menu(data: &mut Data) {
                     && id < data.names.len()
                 {
                     entry_menu(data, id);
+                    println!("{HELP}");
                 }
             }
             "new" | "n" => {
@@ -127,7 +128,7 @@ fn entry_menu(data: &mut Data, id: usize) {
         println!("\x1b[2K");
     }
     fn show_field(entry: &DropShred<Entry>, field: usize) {
-        println!(
+        print!(
             "{}: \"{}\"",
             entry.fields[field].0.as_str(),
             entry.fields[field].1.as_str()
@@ -181,7 +182,26 @@ fn entry_menu(data: &mut Data, id: usize) {
                     println!("Stop wasting my time");
                     continue;
                 }
+                println!("Writing");
                 entry.fields.push((name, (*value).clone()));
+                let (mut key, mut iv) = (DropShred::new([0; 240]), DropShred::new([0; 16]));
+                password_to_key(&password, &mut key, &mut iv);
+                let mut entry_iv = iv.clone();
+                get_entry_iv(id, &mut entry_iv);
+                data.entries[id] = Vec::new();
+                let mut encrypter = EncryptWriter::new(
+                    &mut data.entries[id],
+                    *entry_iv,
+                    key.as_slice(),
+                    FLUSH_SOURCE,
+                )
+                .unwrap();
+                entry.to_binary(&mut encrypter).unwrap();
+                std::mem::drop(encrypter);
+                data.decrypt_entry(id, &password, &mut entry);
+                println!("Saving");
+                data.save(&key, &iv);
+                println!("Done")
             }
             "back" | "cancel" | "b" | "c" | "leave" | "exit" => return,
             _ => {}
