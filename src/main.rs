@@ -14,6 +14,7 @@ use abes_nice_things::shred::{DropShred, Shred};
 use abes_nice_things::{FromBinary, ToBinary};
 use std::fs::File;
 use std::io::{Read, Write};
+mod tui;
 
 const FILE_NAME: &str = "passwords/passwords";
 const TEMP_FILE: &str = "passwords/temp_passwords";
@@ -31,10 +32,20 @@ fn main() {
     let password_hash = sha512(password.as_bytes());
     std::mem::drop(password);
     let mut data = Data::load(&key, &iv, password_hash);
-    terminal_menu(&mut data);
+    //terminal_menu(&mut data);
+    tui::tui(&mut data);
     std::mem::drop(normalizer);
 }
-
+// Typing menu at top line for searching and passwords and stuff
+//  It will have a prompt when needed like "field name:" and when getting normal data it will have
+//  the prompt be highlighted green and then typing password red
+//  The terminal cursor will be at the top line at all times
+// left column for choosing entry and showing which entry is chosen
+// middle column for choosing password or fields and showing which is chosen
+// right column for displaying data
+// when choosing entry or field, the last thing will be a different color and will create a new one
+// typing when choosing will fuzzy search and reorder the list
+// All must be able to handle multi line things properly
 fn terminal_menu(data: &mut Data) {
     const HELP: &str = "help - This menu\n\
         list - list all entries\n\
@@ -78,7 +89,6 @@ fn terminal_menu(data: &mut Data) {
                 });
                 let mut password = DropShred::new(String::new());
                 input_password(&mut password, data.password_hash);
-                println!("What name for the entry?");
                 let (mut key, mut iv) = (DropShred::new([0; 240]), DropShred::new([0; 16]));
                 password_to_key(&password, &mut key, &mut iv);
                 let last_index = data.entries.len();
@@ -114,7 +124,7 @@ fn entry_menu(data: &mut Data, id: usize) {
         fields: Vec::new(),
         clipboard_rule: ClipboardRule::Deny,
     });
-    data.decrypt_entry(id, &password, &mut entry);
+    //data.decrypt_entry(id, &password, &mut entry);
     const HELP: &str = "help - This menu\n\
         show password - Show the password for 10 seconds\n\
         list - List all field names\n\
@@ -198,7 +208,7 @@ fn entry_menu(data: &mut Data, id: usize) {
                 .unwrap();
                 entry.to_binary(&mut encrypter).unwrap();
                 std::mem::drop(encrypter);
-                data.decrypt_entry(id, &password, &mut entry);
+                //data.decrypt_entry(id, &password, &mut entry);
                 println!("Saving");
                 data.save(&key, &iv);
                 println!("Done")
@@ -344,16 +354,13 @@ impl Data {
     fn decrypt_entry(
         &self,
         entry: usize,
-        password: &DropShred<String>,
+        key: &DropShred<[u8; 240]>,
+        entry_iv: &DropShred<[u8; 16]>,
         output: &mut DropShred<Entry>,
     ) {
-        let mut key = DropShred::new([0; 240]);
-        let mut iv = DropShred::new([0; 16]);
-        password_to_key(&password, &mut key, &mut iv);
         // We don't need to shred this because it contains only encrypted data
-        get_entry_iv(entry, &mut iv);
         let mut decrypter =
-            DecryptReader::new(self.entries[entry].as_slice(), *iv, key.as_slice()).unwrap();
+            DecryptReader::new(self.entries[entry].as_slice(), **entry_iv, key.as_slice()).unwrap();
         *output = DropShred::new(Entry::from_binary(&mut decrypter).unwrap());
     }
 }
