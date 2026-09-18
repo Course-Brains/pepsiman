@@ -196,6 +196,17 @@ impl TUIState {
                             self.search = Some(String::new());
                         }
                         self.search.as_mut().unwrap().push(other as char);
+                        // Now we find the first entry with that as a subset
+                        if self.selected_field.is_none() {
+                            for (index, name) in data.names.iter().enumerate() {
+                                let name = DropShred::new(name.to_lowercase());
+                                let search = self.search.as_ref().unwrap().to_lowercase();
+                                if name.contains(search.as_str()) {
+                                    self.selected_entry = SelectedEntry::Entry(index);
+                                    break;
+                                }
+                            }
+                        }
                     } else {
                         continue;
                     }
