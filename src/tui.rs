@@ -1,6 +1,8 @@
 use super::*;
 use abes_nice_things::Style;
 use abes_nice_things::shred::ShredContents;
+const EMPTY_KEY: (DropShred<[u8; 240]>, DropShred<[u8; 16]>) =
+    (DropShred::new([0; 240]), DropShred::new([0; 16]));
 pub fn tui(data: &mut Data) {
     assert_eq!(data.names.len(), data.entries.len());
     let mut state = TUIState {
@@ -30,9 +32,15 @@ impl TUIState {
         // We clear the screen
         write!(buf, "\x1b[H\x1b[0J").unwrap();
         // The first line is the search/input
-        if let Some(search) = &self.search {
-            write!(buf, "\x1b[H{search}").unwrap();
-        }
+        write!(
+            buf,
+            "\x1b[H{}",
+            self.search
+                .as_ref()
+                .map(|s| s.as_str())
+                .unwrap_or("/edit to edit")
+        )
+        .unwrap();
         let (width, height) = get_terminal_size();
 
         // Next is a divider between the search and the rest
@@ -47,8 +55,7 @@ impl TUIState {
             let visible_entries = (height - 5).min(data.names.len() + 1); // +1 for new
             let start = match self.selected_entry {
                 SelectedEntry::Entry(index) => {
-                    let half_visible = visible_entries / 2;
-                    index.saturating_sub(half_visible)
+                    index.saturating_sub((visible_entries / 2).max(height - 5))
                 }
                 SelectedEntry::New => (data.names.len() - 1).saturating_sub(visible_entries),
             };
@@ -201,7 +208,7 @@ impl TUIState {
             if let Some((selected_field, entry)) = &mut state.selected_field {
                 if let SelectedField::New = selected_field {
                     // First we get the name
-                    let name = input("Field name: ");
+                    let name = input("Field name");
                     if name.is_empty() {
                         return true;
                     }
@@ -213,11 +220,62 @@ impl TUIState {
                     );
                     let mut value = DropShred::new(String::new());
                     std::io::stdout().flush().unwrap();
-                    input_hidden(&mut value);
+                    if !input_hidden(&mut value) {
+                        return true;
+                    }
 
                     // Now we update everything
                     entry.fields.push((name, (*value).clone()));
                     let (mut key, mut iv) = (DropShred::new([0; 240]), DropShred::new([0; 16]));
+                    if !get_key(&mut key, &mut iv, data.password_hash) {
+                        return true;
+                    }
+                    let mut entry_iv = iv.clone();
+                    get_entry_iv(state.selected_entry.unwrap_entry(), &mut entry_iv);
+                    let mut encrypted = Vec::new();
+                    let mut encrypter =
+                        EncryptWriter::new(&mut encrypted, *entry_iv, key.as_slice(), FLUSH_SOURCE)
+                            .unwrap();
+                    entry.to_binary(&mut encrypter).unwrap();
+                    std::mem::drop(encrypter);
+                    data.entries[state.selected_entry.unwrap_entry()] = encrypted;
+                    data.save(&key, &iv);
+                    data.decrypt_entry(state.selected_entry.unwrap_entry(), &key, &entry_iv, entry);
+                } else if state.search.as_ref().map(|s| s.as_str()) == Some("/edit") {
+                    state.search = None;
+                    // Editing a field will edit the name or value
+                    match input("name or value").to_lowercase().as_str() {
+                        "name" | "n" => {
+                            // Can't change the name of the password
+                            if let SelectedField::Password = selected_field {
+                                return true;
+                            }
+                            let new_name = input("name");
+                            if new_name.is_empty() {
+                                return true;
+                            }
+                            entry.fields[selected_field.unwrap_field()].0 = new_name;
+                        }
+                        "value" | "val" | "v" => {
+                            let mut new_value = DropShred::new(String::new());
+                            if !input_hidden_prompt("New value", &mut new_value) {
+                                return true;
+                            }
+                            if new_value.is_empty() {
+                                return true;
+                            }
+                            match selected_field {
+                                SelectedField::Password => entry.password = (*new_value).clone(),
+                                SelectedField::Field(field) => {
+                                    entry.fields[*field].1 = (*new_value).clone()
+                                }
+                                SelectedField::New => unreachable!(),
+                            }
+                        }
+                        _ => return true,
+                    }
+                    // now we have to save the data
+                    let (mut key, mut iv) = EMPTY_KEY;
                     if !get_key(&mut key, &mut iv, data.password_hash) {
                         return true;
                     }
@@ -245,6 +303,19 @@ impl TUIState {
                     std::thread::sleep(std::time::Duration::from_secs(10));
                 }
             } else {
+                if let SelectedEntry::Entry(entry) = state.selected_entry
+                    && state.search.as_ref().map(|s| s.as_str()) == Some("/edit")
+                {
+                    state.search = None;
+                    let new_name = input("New name");
+                    let (mut key, mut iv) = EMPTY_KEY;
+                    if new_name.is_empty() || !get_key(&mut key, &mut iv, data.password_hash) {
+                        return true;
+                    }
+                    data.names[entry] = new_name;
+                    data.save(&key, &iv);
+                    return true;
+                }
                 match state.selected_entry {
                     SelectedEntry::Entry(index) => {
                         let (mut key, mut iv) = (DropShred::new([0; 240]), DropShred::new([0; 16]));
@@ -272,7 +343,7 @@ impl TUIState {
                         // We make a new entry!
 
                         // First we get the name
-                        let name = input("Entry name: ");
+                        let name = input("Entry name");
                         if name.is_empty() {
                             return true;
                         }
@@ -284,7 +355,9 @@ impl TUIState {
                             Style::new().background_yellow()
                         );
                         std::io::stdout().flush().unwrap();
-                        input_hidden(&mut password);
+                        if !input_hidden(&mut password) {
+                            return true;
+                        }
                         if password.is_empty() {
                             return true;
                         }
@@ -420,6 +493,13 @@ impl SelectedField {
             }
         }
     }
+    fn unwrap_field(self) -> usize {
+        if let SelectedField::Field(field) = self {
+            return field;
+        } else {
+            panic!("Nuh uh")
+        }
+    }
 }
 fn get_terminal_size() -> (usize, usize) {
     (
@@ -450,6 +530,7 @@ fn get_terminal_size() -> (usize, usize) {
     )
 }
 // Returns if it was successful
+#[must_use]
 fn get_key(
     key: &mut DropShred<[u8; 240]>,
     iv: &mut DropShred<[u8; 16]>,
@@ -473,6 +554,7 @@ fn get_key(
     true
 }
 // Retuns if it was successful
+#[must_use]
 fn input_hidden(output: &mut DropShred<String>) -> bool {
     weirdify();
     // Just shredding to begin with since it needs to be empty
@@ -508,9 +590,18 @@ fn input_hidden(output: &mut DropShred<String>) -> bool {
         }
     }
 }
+#[must_use]
+fn input_hidden_prompt(prompt: &str, output: &mut DropShred<String>) -> bool {
+    print!(
+        "\x1b[H\x1b[0K{}{prompt}\x1b[0m: ",
+        Style::new().background_yellow()
+    );
+    std::io::stdout().flush().unwrap();
+    input_hidden(output)
+}
 fn input(prompt: &str) -> String {
     print!(
-        "\x1b[H\x1b[0K{}{prompt}\x1b[0m",
+        "\x1b[H\x1b[0K{}{prompt}\x1b[0m: ",
         Style::new().background_yellow()
     );
     std::io::stdout().flush().unwrap();
