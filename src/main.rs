@@ -312,6 +312,36 @@ impl Data {
             file.write_all(entry.as_slice()).unwrap();
         }
         std::fs::rename(TEMP_FILE, FILE_NAME).unwrap();
+        // Now we push to github or wherever the remote is idk
+        if std::fs::exists("passwords/.git").is_ok_and(|a| a) {
+            assert!(
+                std::process::Command::new("git")
+                    .args(["-C", "passwords", "add", "."])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            assert!(
+                std::process::Command::new("git")
+                    .args([
+                        "-C",
+                        "passwords",
+                        "commit",
+                        "--allow-empty-message",
+                        "--no-edit"
+                    ])
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            assert!(
+                std::process::Command::new("git")
+                    .args(["-C", "passwords", "push"])
+                    .status()
+                    .unwrap()
+                    .success()
+            )
+        }
     }
     fn load(key: &DropShred<[u8; 240]>, iv: &DropShred<[u8; 16]>, password_hash: [u8; 64]) -> Data {
         let mut file = File::open(FILE_NAME).unwrap();
