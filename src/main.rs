@@ -461,6 +461,11 @@ impl FromBinary for ClipboardRule {
         })
     }
 }
+impl Default for ClipboardRule {
+    fn default() -> Self {
+        ClipboardRule::Deny
+    }
+}
 /// This is a specialized function for running commands which take in all of stdin before
 /// outputting anything and you will always want a specific amount of output bytes from. AKA the
 /// hashing commands, only use this with the hashing commands.

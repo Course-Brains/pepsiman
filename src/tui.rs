@@ -190,6 +190,7 @@ impl TUIState {
                         }
                     }
                 }
+                // Search bar
                 other => {
                     if other.is_ascii_graphic() {
                         if self.search.is_none() {
@@ -301,6 +302,61 @@ impl TUIState {
                     data.entries[state.selected_entry.unwrap_entry()] = encrypted;
                     data.save(&key, &iv);
                     data.decrypt_entry(state.selected_entry.unwrap_entry(), &key, &entry_iv, entry);
+                } else if state.search.as_ref().map(|s| s.as_str()) == Some("/bulk") {
+                    // Format is:
+                    // [title]\t[password]\t[username]\t{url}\t{notes}\n
+                    // with the end point being a \n after the last entry and {} being optional
+                    let stdin = std::io::stdin();
+                    let (mut key, mut iv) = EMPTY_KEY;
+                    if !get_key(&mut key, &mut iv, data.password_hash) {
+                        return true;
+                    }
+                    loop {
+                        assert_eq!(data.entries.len(), data.names.len());
+                        let mut line = String::new();
+                        stdin.read_line(&mut line).unwrap();
+                        if line.is_empty() {
+                            break;
+                        }
+                        let mut split = line.split('\t');
+                        let title = split.next().unwrap();
+                        let password = split.next().unwrap();
+                        let username = split.next().unwrap();
+                        let url = split.next().unwrap();
+                        let notes = split.next().unwrap();
+                        let index = data.entries.len();
+                        assert!(!title.is_empty());
+                        assert!(!password.is_empty());
+                        assert!(!username.is_empty());
+                        let mut entry = Entry {
+                            password: password.to_string(),
+                            fields: vec![("Username".to_string(), username.to_string())],
+                            clipboard_rule: Default::default(),
+                        };
+                        if !url.is_empty() {
+                            entry.fields.push(("URL".to_string(), url.to_string()))
+                        }
+                        if !notes.is_empty() {
+                            entry.fields.push(("Notes".to_string(), notes.to_string()))
+                        }
+
+                        // Encrypting
+                        let mut entry_iv = iv.clone();
+                        get_entry_iv(index, &mut entry_iv);
+                        let mut encrypted = Vec::new();
+                        let mut encrypter = EncryptWriter::new(
+                            &mut encrypted,
+                            *entry_iv,
+                            key.as_slice(),
+                            FLUSH_SOURCE,
+                        )
+                        .unwrap();
+                        entry.to_binary(&mut encrypter).unwrap();
+                        std::mem::drop(encrypter);
+                        data.entries.push(encrypted);
+                        data.names.push(title.to_string());
+                    }
+                    data.save(&key, &iv);
                 } else {
                     print!("\x1b[H");
                     match selected_field {
