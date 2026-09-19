@@ -488,7 +488,7 @@ fn run_with_stdin<const N: usize>(command: &str, input: &[u8]) -> [u8; N] {
 }
 /// Under the hood this is sha256 but getting every other byte
 fn sha128(input: &[u8]) -> [u8; 16] {
-    let output = run_with_stdin::<64>("sha256", input);
+    let output = run_with_stdin::<64>("sha256sum", input);
     let output = str::from_utf8(&output).unwrap();
 
     let mut out = [0; 16];
@@ -498,7 +498,7 @@ fn sha128(input: &[u8]) -> [u8; 16] {
     out
 }
 fn sha512(input: &[u8]) -> [u8; 64] {
-    let output: [u8; 128] = run_with_stdin("sha512", input);
+    let output: [u8; 128] = run_with_stdin("sha512sum", input);
     let output = str::from_utf8(&output).unwrap();
 
     let mut out = [0; 64];
